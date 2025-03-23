@@ -35,6 +35,10 @@ def render_video():
         
         print(f"Detected {num_audio_streams} audio stream(s) in the input file")
         
+        # Additional debugging information
+        for i, stream in enumerate(audio_streams):
+            print(f"Audio stream {i}: channels={stream.get('channels', 'unknown')}, codec={stream.get('codec_name', 'unknown')}")
+        
         # Build ffmpeg command
         input_stream = ffmpeg.input(input_file)
         video_stream = input_stream.video
@@ -63,15 +67,36 @@ def render_video():
                 inputs=num_audio_streams
             )
             
-            # Explicitly downmix to stereo using the 'pan' filter with clear channel mapping
-            stereo_audio = merged_audio.filter(
-                'pan', 
-                channels=2,
-                # Create clear stereo mapping: left channel from first half of inputs, right from second half
-                # This is a simple mapping approach; you may need to adjust based on your specific needs
-                c0='c0+c2+c4+c6',  # Left channel: Sum of even input channels
-                c1='c1+c3+c5+c7'   # Right channel: Sum of odd input channels
-            )
+            # For 2 audio streams, use a simpler approach - just merge them
+            if num_audio_streams == 2:
+                # Simple stereo output - just use the merged streams directly
+                stereo_audio = merged_audio
+            else:
+                # For more than 2 streams, use explicit channel mapping
+                # Dynamically create the channel mapping based on actual number of channels
+                # First half of channels go to left, second half to right
+                left_channels = []
+                right_channels = []
+                
+                for i in range(num_audio_streams):
+                    if i % 2 == 0:  # Even channels go to left
+                        left_channels.append(f'c{i}')
+                    else:  # Odd channels go to right
+                        right_channels.append(f'c{i}')
+                
+                # Create the channel mapping strings
+                left_map = '+'.join(left_channels) if left_channels else 'c0'
+                right_map = '+'.join(right_channels) if right_channels else 'c1'
+                
+                print(f"Using channel mapping: Left={left_map}, Right={right_map}")
+                
+                # Apply the pan filter with dynamic mapping
+                stereo_audio = merged_audio.filter(
+                    'pan', 
+                    channels=2,
+                    c0=left_map,
+                    c1=right_map
+                )
             
             output = ffmpeg.output(
                 video_stream, 
@@ -109,6 +134,10 @@ def render_video():
         print("Starting video rendering...")
         
         for line in iter(process.stderr.readline, ''):
+            # Print any error lines to help with debugging
+            if "Error" in line or "Invalid" in line:
+                print(f"FFmpeg message: {line.strip()}")
+                
             matches = time_pattern.search(line)
             if matches:
                 # Calculate progress
