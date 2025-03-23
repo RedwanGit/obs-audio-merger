@@ -48,29 +48,42 @@ def render_video():
                 audio_stream, 
                 output_file, 
                 vcodec='copy',
-                acodec='aac'
+                acodec='aac',
+                strict='experimental',
+                # Ensure standard audio parameters for cross-platform compatibility
+                ar='48000',        # Sample rate: 48kHz is standard for video
+                ac='2',            # 2 channels (stereo)
+                ab='192k'          # Bitrate
             ).overwrite_output()
         else:
-            # If there are multiple audio streams, merge them
-            # Create filter to merge all audio channels
-            # The 'amerge' filter combines multiple audio inputs into a single output
-            # 'pan' can be used for more advanced channel mapping if needed
+            # If there are multiple audio streams, merge them with clearer channel mapping
             merged_audio = ffmpeg.filter(
                 [input_stream[f'a:{i}'] for i in range(num_audio_streams)],
-                'amerge'
+                'amerge',
+                inputs=num_audio_streams
             )
             
-            # If we have more than 2 channels, we need to specify the number of channels
-            if num_audio_streams > 2:
-                merged_audio = merged_audio.filter('pan', channels=2, 
-                                                  **{f'c{i}': f'c{i}' for i in range(2)})
+            # Explicitly downmix to stereo using the 'pan' filter with clear channel mapping
+            stereo_audio = merged_audio.filter(
+                'pan', 
+                channels=2,
+                # Create clear stereo mapping: left channel from first half of inputs, right from second half
+                # This is a simple mapping approach; you may need to adjust based on your specific needs
+                c0='c0+c2+c4+c6',  # Left channel: Sum of even input channels
+                c1='c1+c3+c5+c7'   # Right channel: Sum of odd input channels
+            )
             
             output = ffmpeg.output(
                 video_stream, 
-                merged_audio, 
+                stereo_audio, 
                 output_file, 
                 vcodec='copy',
-                acodec='aac'
+                acodec='aac',
+                strict='experimental',
+                # Ensure standard audio parameters for cross-platform compatibility  
+                ar='48000',        # Sample rate: 48kHz is standard for video
+                ac='2',            # 2 channels (stereo)
+                ab='192k'          # Bitrate
             ).overwrite_output()
         
         cmd = ffmpeg.compile(output)
@@ -141,7 +154,26 @@ def render_video():
         if process.returncode == 0:
             print(f"Rendered video saved as: {output_file}")
             if num_audio_streams > 1:
-                print(f"Successfully merged {num_audio_streams} audio channels into a single stereo track")
+                print(f"Successfully merged {num_audio_streams} audio channels into a stereo track compatible with Windows and Linux")
+            
+            # Optional: Also create a fallback version with PCM audio if needed
+            create_fallback = False  # Set to True if you want a fallback version
+            if create_fallback and num_audio_streams > 1:
+                fallback_file = os.path.join(directory, "FALLBACK_" + filename)
+                print(f"Creating fallback version with PCM audio: {fallback_file}")
+                
+                # Create a fallback with PCM audio (highly compatible)
+                fallback_cmd = [
+                    "ffmpeg", "-i", output_file,
+                    "-c:v", "copy", 
+                    "-c:a", "pcm_s16le",  # PCM audio (very compatible)
+                    "-ar", "44100",        # CD quality
+                    "-ac", "2",            # Stereo
+                    fallback_file
+                ]
+                
+                subprocess.run(fallback_cmd)
+                print(f"Fallback video created: {fallback_file}")
         else:
             print(f"Error: ffmpeg process exited with code {process.returncode}")
             print("Check the output above for more details on the error")
